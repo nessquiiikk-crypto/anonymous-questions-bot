@@ -11,7 +11,7 @@ app = Application.builder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Привет! Напиши сюда сообщение — я анонимно передам его админу 🙂"
+        "Привет! Напиши сюда сообщение — я анонимно передам его админу <3"
     )
 
 async def forward_anonymous(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -42,7 +42,17 @@ async def health(request: web.Request):
 
 async def on_startup(aioapp: web.Application):
     await app.initialize()
-    await app.bot.set_webhook(f"{PUBLIC_URL}/webhook")
+
+    if not PUBLIC_URL or not PUBLIC_URL.startswith("https://"):
+        print("PUBLIC_URL is missing or not https. Skipping webhook setup.")
+        return
+
+    try:
+        await app.bot.set_webhook(f"{PUBLIC_URL}/webhook")
+        print("Webhook set successfully:", f"{PUBLIC_URL}/webhook")
+    except Exception as e:
+        print("Failed to set webhook:", e)
+
 
 async def on_cleanup(aioapp: web.Application):
     await app.bot.delete_webhook()
