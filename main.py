@@ -8,6 +8,43 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 PUBLIC_URL = os.getenv("PUBLIC_URL")
 
 app = Application.builder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, anon_message))
+app.add_error_handler(error_handler)
+
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+ADMIN_ID = 1260954870
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет! Напиши сообщение — я передам его анонимно <3"
+    )
+
+
+async def anon_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📩 Анонимное сообщение:\n{update.message.text}"
+    )
+
+    await update.message.reply_text("Отправлено ✅")
+
+
+async def error_handler(update, context):
+    import logging
+    logging.exception("Ошибка:", exc_info=context.error)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
