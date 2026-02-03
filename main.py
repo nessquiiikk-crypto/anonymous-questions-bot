@@ -1,16 +1,6 @@
 import os
+import logging
 from aiohttp import web
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-PUBLIC_URL = os.getenv("PUBLIC_URL")
-
-app = Application.builder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, anon_message))
-app.add_error_handler(error_handler)
 
 from telegram import Update
 from telegram.ext import (
@@ -21,37 +11,25 @@ from telegram.ext import (
     filters,
 )
 
-ADMIN_ID = 1260954870
+# ---- logging (чтоб не светить лишнее) ----
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# ---- env ----
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+PUBLIC_URL = os.getenv("PUBLIC_URL")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Привет! Напиши сообщение — я передам его анонимно <3"
-    )
-
-
-async def anon_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"📩 Анонимное сообщение:\n{update.message.text}"
-    )
-
-    await update.message.reply_text("Отправлено ✅")
-
-
-async def error_handler(update, context):
-    import logging
-    logging.exception("Ошибка:", exc_info=context.error)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---- bot handlers ----
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Напиши сюда сообщение — я анонимно передам его админу <3"
     )
 
 async def forward_anonymous(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
     text = update.message.text
 
     await context.bot.send_message(
@@ -61,49 +39,58 @@ async def forward_anonymous(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Отправлено ✅")
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_anonymous))
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    logging.exception("Unhandled error", exc_info=context.error)
 
+# ---- create telegram application ----
+tg_app = Application.builder().token(TOKEN).build()
+tg_app.add_handler(CommandHandler("start", start_cmd))
+tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_anonymous))
+tg_app.add_error_handler(error_handler)
+
+# ---- aiohttp routes ----
 routes = web.RouteTableDef()
-
-@routes.post("/webhook")
-async def webhook(request: web.Request):
-    data = await request.json()
-    update = Update.de_json(data, app.bot)
-    await app.process_update(update)
-    return web.Response(text="ok")
 
 @routes.get("/")
 async def health(request: web.Request):
     return web.Response(text="alive")
 
+@routes.post("/webhook")
+async def webhook(request: web.Request):
+    data = await request.json()
+    update = Update.de_json(data, tg_app.bot)
+    await tg_app.process_update(update)
+    return web.Response(text="ok")
+
+# ---- lifecycle ----
 async def on_startup(aioapp: web.Application):
-    await app.initialize()
+    if not TOKEN or not ADMIN_ID:
+        raise RuntimeError("BOT_TOKEN or ADMIN_ID is missing in environment variables")
 
-    if not PUBLIC_URL or not PUBLIC_URL.startswith("https://"):
-        print("PUBLIC_URL is missing or not https. Skipping webhook setup.")
-        return
+    await tg_app.initialize()
+    await tg_app.start()
 
-    try:
-        await app.bot.set_webhook(f"{PUBLIC_URL}/webhook")
-        print("Webhook set successfully:", f"{PUBLIC_URL}/webhook")
-    except Exception as e:
-        print("Failed to set webhook:", e)
-
+    # Ставим webhook только если PUBLIC_URL нормальный
+    if PUBLIC_URL and PUBLIC_URL.startswith("https://"):
+        try:
+            await tg_app.bot.set_webhook(f"{PUBLIC_URL}/webhook")
+            print("Webhook set:", f"{PUBLIC_URL}/webhook")
+        except Exception as e:
+            print("Failed to set webhook:", e)
+    else:
+        print("PUBLIC_URL missing/invalid, skipping webhook setup")
 
 async def on_cleanup(aioapp: web.Application):
-    await app.bot.delete_webhook()
-    await app.shutdown()
-    await app.stop()
+    try:
+        await tg_app.bot.delete_webhook()
+    except Exception:
+        pass
+
+    await tg_app.stop()
+    await tg_app.shutdown()
 
 def main():
     aioapp = web.Application()
     aioapp.add_routes(routes)
     aioapp.on_startup.append(on_startup)
     aioapp.on_cleanup.append(on_cleanup)
-
-    port = int(os.getenv("PORT", "10000"))
-    web.run_app(aioapp, host="0.0.0.0", port=port)
-
-if __name__ == "__main__":
-    main()
